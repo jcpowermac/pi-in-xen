@@ -55,6 +55,7 @@ jobs:
         run: |
           docker build -t alpine-kernel:a -f build/kernel/Dockerfile.a build/kernel/
           CONTAINER=$(docker create alpine-kernel:a)
+          mkdir -p build/kernel/out
           docker cp "$CONTAINER":/out/. build/kernel/out/
           docker rm "$CONTAINER"
           ls -lh build/kernel/out/
@@ -64,6 +65,7 @@ jobs:
         run: |
           docker build -t alpine-kernel:b -f build/kernel/Dockerfile.b build/kernel/
           CONTAINER=$(docker create alpine-kernel:b)
+          mkdir -p build/kernel/out
           docker cp "$CONTAINER":/out/. build/kernel/out/
           docker rm "$CONTAINER"
           ls -lh build/kernel/out/
@@ -72,6 +74,7 @@ jobs:
         run: |
           docker build -t alpine-rootfs -f build/rootfs/Dockerfile build/rootfs/
           CONTAINER=$(docker create alpine-rootfs)
+          mkdir -p build/rootfs/out
           docker cp "$CONTAINER":/out/initramfs.cpio.gz build/rootfs/out/
           docker rm "$CONTAINER"
           ls -lh build/rootfs/out/
