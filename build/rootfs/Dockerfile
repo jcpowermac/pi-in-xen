@@ -34,8 +34,7 @@ RUN set -eux \
  && cp -a /usr/bin/git /rootfs/usr/bin/ \
  && cp -a /usr/bin/rg /rootfs/usr/bin/ \
  && cp -a /usr/lib /rootfs/usr/lib/ \
- && cp -a /usr/share /rootfs/usr/share/ \
- && cp -a /usr/include /rootfs/usr/include/
+ && [ -d /usr/share ] && cp -a /usr/share /rootfs/usr/share/ || true
 
 # Copy busybox and create symlinks (mdev is a busybox applet)
 RUN set -eux \
