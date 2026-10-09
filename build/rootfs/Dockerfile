@@ -56,11 +56,16 @@ RUN set -eux \
  && cp -a /lib /rootfs/lib \
  && cp -a /lib64 /rootfs/lib64 2>/dev/null || true
 
-# Install pi agent into rootfs
-WORKDIR /rootfs/app
+# Install pi agent in main container (npm works here), then copy to rootfs
+WORKDIR /app
 RUN set -eux \
- && /rootfs/usr/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent --prefix /rootfs/usr/local \
- && rm -rf /rootfs/var/cache/apk /rootfs/root/.npm /rootfs/tmp/*
+ && npm install -g --ignore-scripts @earendil-works/pi-coding-agent --prefix /usr/local \
+ && rm -rf /var/cache/apk /root/.npm /tmp/*
+
+# Copy installed pi agent to rootfs
+RUN set -eux \
+ && cp -a /usr/local/bin /rootfs/usr/local/bin \
+ && cp -a /usr/local/lib /rootfs/usr/local/lib
 
 # Set up init and passwd/group
 RUN set -eux \
