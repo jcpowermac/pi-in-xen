@@ -21,7 +21,9 @@ RUN set -eux \
 
 # Create rootfs structure
 RUN set -eux \
- && mkdir -p /rootfs/{bin,sbin,etc,proc,sys,dev,usr/bin,usr/sbin,usr/local/bin,var,workspace,app,etc/ssl/certs,tmp,root}
+ && mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev \
+ && mkdir -p /rootfs/usr/bin /rootfs/usr/sbin /rootfs/usr/local/bin /rootfs/usr/lib /rootfs/usr/share /rootfs/usr/include \
+ && mkdir -p /rootfs/var /rootfs/workspace /rootfs/app /rootfs/etc/ssl/certs /rootfs/tmp /rootfs/root /rootfs/lib /rootfs/lib64
 
 # Copy installed packages into rootfs
 # Copy /usr (node, git, rg, node_modules)
