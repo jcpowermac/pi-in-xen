@@ -17,7 +17,6 @@ RUN set -eux \
         git \
         ripgrep \
         ca-certificates \
-        mdev \
         busybox
 
 # Create rootfs structure
@@ -36,15 +35,16 @@ RUN set -eux \
  && cp -a /usr/share /rootfs/usr/share/ \
  && cp -a /usr/include /rootfs/usr/include/
 
-# Copy busybox and create symlinks
+# Copy busybox and create symlinks (mdev is a busybox applet)
 RUN set -eux \
  && cp -a /bin/busybox /rootfs/bin/ \
  && /rootfs/bin/busybox --install -s /rootfs/bin \
- && cp -a /bin/sh /rootfs/bin/sh \
- && cp -a /sbin/mdev /rootfs/sbin/ \
- && cp -a /sbin/ifup /rootfs/sbin/ \
- && cp -a /sbin/ifdown /rootfs/sbin/ \
- && cp -a /sbin/ip /rootfs/sbin/ip 2>/dev/null || true
+ && /rootfs/bin/busybox --install -s /rootfs/sbin \
+ && ln -sf /bin/busybox /rootfs/bin/sh 2>/dev/null || true \
+ && ln -sf /bin/busybox /rootfs/sbin/mdev 2>/dev/null || true \
+ && ln -sf /bin/busybox /rootfs/sbin/ifup 2>/dev/null || true \
+ && ln -sf /bin/busybox /rootfs/sbin/ifdown 2>/dev/null || true \
+ && ln -sf /bin/busybox /rootfs/sbin/ip 2>/dev/null || true
 
 # Copy ca-certificates
 RUN set -eux \
