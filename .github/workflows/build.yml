@@ -37,16 +37,19 @@ jobs:
       - name: Determine kernel version
         id: kernel-version
         run: |
-          if [[ "${{ github.event.inputs.kernel-option }}" == "b" ]]; then
+          KERNEL_OPTION="${{ github.event.inputs.kernel-option || 'a' }}"
+          if [[ "$KERNEL_OPTION" == "b" ]]; then
             # Option B: custom kernel — extract version from build
             echo "version=alpine-custom" >> $GITHUB_OUTPUT
+            echo "option=b" >> $GITHUB_OUTPUT
           else
             # Option A: linux-virt — use Alpine version
             echo "version=${{ env.ALPINE_VERSION }}-virt" >> $GITHUB_OUTPUT
+            echo "option=a" >> $GITHUB_OUTPUT
           fi
 
       - name: Build kernel (Option A: linux-virt)
-        if: github.event.inputs.kernel-option != 'b'
+        if: steps.kernel-version.outputs.option == 'a'
         run: |
           docker build -t alpine-kernel:a -f build/kernel/Dockerfile.a build/kernel/
           CONTAINER=$(docker create alpine-kernel:a)
@@ -55,7 +58,7 @@ jobs:
           ls -lh build/kernel/out/
 
       - name: Build kernel (Option B: custom minimal)
-        if: github.event.inputs.kernel-option == 'b'
+        if: steps.kernel-version.outputs.option == 'b'
         run: |
           docker build -t alpine-kernel:b -f build/kernel/Dockerfile.b build/kernel/
           CONTAINER=$(docker create alpine-kernel:b)
