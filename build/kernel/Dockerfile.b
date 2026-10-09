@@ -12,7 +12,7 @@ COPY minimalize-config.sh /minimalize-config.sh
 COPY config-alpine /config-alpine
 
 # Build kernel
-RUN set -eux \
+RUN chmod +x /minimalize-config.sh && set -eux \
  && cd /usr/src/linux \
  && cp /config-alpine .config \
  && bash /minimalize-config.sh .config .config.minimal \

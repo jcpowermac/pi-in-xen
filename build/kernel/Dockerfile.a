@@ -7,4 +7,4 @@ FROM alpine:3.21
 RUN apk add --no-cache linux-virt
 
 COPY extract-kernel.sh /extract-kernel.sh
-RUN /extract-kernel.sh
+RUN chmod +x /extract-kernel.sh && /extract-kernel.sh
