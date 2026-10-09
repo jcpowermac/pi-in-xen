@@ -1,7 +1,7 @@
-.PHONY: build kernel-a kernel-b rootfs template test clean
+.PHONY: build kernel-a kernel-b rootfs container extract test clean
 
-# Default build: Option A kernel (fast) + rootfs + template
-build: kernel-a rootfs template
+# Default build: Option A kernel (fast) + rootfs + container
+build: kernel-a rootfs container
 
 # Option A: Alpine linux-virt kernel (fast, practical)
 kernel-a:
@@ -33,12 +33,30 @@ rootfs:
 	docker rm $$CONTAINER
 	@echo "initramfs built: $(ls -lh build/rootfs/out/initramfs.cpio.gz)"
 
-# Create qlvm initramfs template
-template:
-	@echo "Creating qlvm template..."
-	qlvm template create-initramfs pi-agent \
-		--kernel build/kernel/out/vmlinuz \
-		--initramfs build/rootfs/out/initramfs.cpio.gz
+# Create container image (transport for kernel + initramfs)
+container:
+	@echo "Building container image..."
+	mkdir -p build/container/context
+	cp build/kernel/out/vmlinuz build/container/context/
+	cp build/rootfs/out/initramfs.cpio.gz build/container/context/initramfs.img
+	cp build/container/os-release build/container/context/
+	echo "local-build" > build/container/context/kernel-version
+	docker build \
+		--build-arg KERNEL_VERSION=local-build \
+		-t pi-in-xen:latest \
+		-f build/container/Dockerfile \
+		build/container/context/
+	@echo "Container built: pi-in-xen:latest"
+
+# Extract kernel + initramfs from container for qlvm
+extract:
+	@echo "Extracting from container..."
+	CONTAINER=$$(docker create pi-in-xen:latest)
+	mkdir -p build/kernel/out build/rootfs/out
+	docker cp $$CONTAINER:/usr/lib/modules/local-build/vmlinuz build/kernel/out/
+	docker cp $$CONTAINER:/usr/lib/modules/local-build/initramfs.img build/rootfs/out/initramfs.cpio.gz
+	docker rm $$CONTAINER
+	@echo "Extracted to build/kernel/out/vmlinuz and build/rootfs/out/initramfs.cpio.gz"
 
 # Test VM boot
 test: template

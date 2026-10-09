@@ -1,0 +1,118 @@
+name: Build Pi Agent Xen PVH VM
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      kernel-option:
+        description: 'Kernel option: a (linux-virt, fast) or b (custom minimal, slower)'
+        required: false
+        default: 'a'
+        type: choice
+        options: ['a', 'b']
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: jcpowermac/pi-in-xen
+  ALPINE_VERSION: 3.21
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine kernel version
+        id: kernel-version
+        run: |
+          if [[ "${{ github.event.inputs.kernel-option }}" == "b" ]]; then
+            # Option B: custom kernel — extract version from build
+            echo "version=alpine-custom" >> $GITHUB_OUTPUT
+          else
+            # Option A: linux-virt — use Alpine version
+            echo "version=${{ env.ALPINE_VERSION }}-virt" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build kernel (Option A: linux-virt)
+        if: github.event.inputs.kernel-option != 'b'
+        run: |
+          docker build -t alpine-kernel:a -f build/kernel/Dockerfile.a build/kernel/
+          CONTAINER=$(docker create alpine-kernel:a)
+          docker cp "$CONTAINER":/out/. build/kernel/out/
+          docker rm "$CONTAINER"
+          ls -lh build/kernel/out/
+
+      - name: Build kernel (Option B: custom minimal)
+        if: github.event.inputs.kernel-option == 'b'
+        run: |
+          docker build -t alpine-kernel:b -f build/kernel/Dockerfile.b build/kernel/
+          CONTAINER=$(docker create alpine-kernel:b)
+          docker cp "$CONTAINER":/out/. build/kernel/out/
+          docker rm "$CONTAINER"
+          ls -lh build/kernel/out/
+
+      - name: Build rootfs
+        run: |
+          docker build -t alpine-rootfs -f build/rootfs/Dockerfile build/rootfs/
+          CONTAINER=$(docker create alpine-rootfs)
+          docker cp "$CONTAINER":/out/initramfs.cpio.gz build/rootfs/out/
+          docker rm "$CONTAINER"
+          ls -lh build/rootfs/out/
+
+      - name: Prepare container build context
+        run: |
+          mkdir -p build/container/context
+          cp build/kernel/out/vmlinuz build/container/context/
+          cp build/rootfs/out/initramfs.cpio.gz build/container/context/initramfs.img
+          cp build/container/os-release build/container/context/
+          echo "${{ steps.kernel-version.outputs.version }}" > build/container/context/kernel-version
+          ls -lh build/container/context/
+
+      - name: Build container image
+        run: |
+          docker build \
+            --build-arg KERNEL_VERSION="${{ steps.kernel-version.outputs.version }}" \
+            -t pi-in-xen:latest \
+            -f build/container/Dockerfile \
+            build/container/context/
+          docker images pi-in-xen
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push container image
+        if: github.event_name != 'pull_request'
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          if [[ -n "${{ github.ref_name }}" && "${{ github.ref_name }}" =~ ^v ]]; then
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          fi
+          docker tag pi-in-xen:latest "$IMAGE"
+          docker push "$IMAGE"
+          echo "Pushed: $IMAGE"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-agent-xen-pvh
+          path: |
+            build/kernel/out/vmlinuz
+            build/rootfs/out/initramfs.cpio.gz
+            build/kernel/out/.config

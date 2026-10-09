@@ -1,0 +1,8 @@
+NAME="Alpine Linux"
+ID=alpine
+VERSION_ID="3.21"
+PRETTY_NAME="Alpine Linux 3.21 (pi-agent-xen-pvh)"
+HOME_URL="https://alpinelinux.org/"
+BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"
+PI_AGENT="1"
+XEN_PVH="1"
