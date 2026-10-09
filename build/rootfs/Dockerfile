@@ -4,36 +4,79 @@
 
 FROM alpine:3.21
 
-# Copy build scripts
-COPY apk-list.txt /apk-list.txt
+# Copy build files
 COPY init /init
 COPY etc/passwd /etc/passwd.template
 COPY etc/group /etc/group.template
 
-# Create rootfs structure and install packages
+# Install packages normally (apk has repo access)
 RUN set -eux \
- && mkdir -p /rootfs/{bin,sbin,etc,proc,sys,dev,usr/bin,usr/sbin,usr/local/bin,var,workspace,app} \
- && apk add --root /rootfs --initdb --no-cache \
-        busybox \
+ && apk add --no-cache \
         nodejs-lts \
         npm \
         git \
         ripgrep \
         ca-certificates \
         mdev \
+        busybox
+
+# Create rootfs structure
+RUN set -eux \
+ && mkdir -p /rootfs/{bin,sbin,etc,proc,sys,dev,usr/bin,usr/sbin,usr/local/bin,var,workspace,app,etc/ssl/certs,tmp,root}
+
+# Copy installed packages into rootfs
+# Copy /usr (node, git, rg, node_modules)
+RUN set -eux \
+ && cp -a /usr/bin/node /rootfs/usr/bin/ \
+ && cp -a /usr/bin/npm /rootfs/usr/bin/ \
+ && cp -a /usr/bin/npx /rootfs/usr/bin/ \
+ && cp -a /usr/bin/git /rootfs/usr/bin/ \
+ && cp -a /usr/bin/rg /rootfs/usr/bin/ \
+ && cp -a /usr/lib /rootfs/usr/lib/ \
+ && cp -a /usr/share /rootfs/usr/share/ \
+ && cp -a /usr/include /rootfs/usr/include/
+
+# Copy busybox and create symlinks
+RUN set -eux \
+ && cp -a /bin/busybox /rootfs/bin/ \
  && /rootfs/bin/busybox --install -s /rootfs/bin \
+ && cp -a /bin/sh /rootfs/bin/sh \
+ && cp -a /sbin/mdev /rootfs/sbin/ \
+ && cp -a /sbin/ifup /rootfs/sbin/ \
+ && cp -a /sbin/ifdown /rootfs/sbin/ \
+ && cp -a /sbin/ip /rootfs/sbin/ip 2>/dev/null || true
+
+# Copy ca-certificates
+RUN set -eux \
+ && cp -a /etc/ssl /rootfs/etc/ssl
+
+# Copy essential libraries (musl, etc.)
+RUN set -eux \
+ && cp -a /lib /rootfs/lib \
+ && cp -a /lib64 /rootfs/lib64 2>/dev/null || true
+
+# Install pi agent into rootfs
+WORKDIR /rootfs/app
+RUN set -eux \
+ && /rootfs/usr/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent --prefix /rootfs/usr/local \
+ && rm -rf /rootfs/var/cache/apk /rootfs/root/.npm /rootfs/tmp/*
+
+# Set up init and passwd/group
+RUN set -eux \
  && cp /etc/passwd.template /rootfs/etc/passwd \
  && cp /etc/group.template /rootfs/etc/group \
  && cp /init /rootfs/init \
  && chmod +x /rootfs/init
 
-# Install pi agent into rootfs
-WORKDIR /rootfs/app
-RUN apk add --root /rootfs --no-cache npm \
- && /rootfs/usr/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent --prefix /rootfs/usr/local \
- && rm -rf /rootfs/var/cache/apk /rootfs/root/.npm /rootfs/tmp/*
+# Clean up rootfs (remove unnecessary files)
+RUN set -eux \
+ && find /rootfs -name "*.a" -delete 2>/dev/null || true \
+ && find /rootfs -name "*.o" -delete 2>/dev/null || true \
+ && find /rootfs -name "test" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Pack as initramfs cpio.gz
-WORKDIR /rootfs
-RUN find . | cpio -H newc -o | gzip -9 > /out/initramfs.cpio.gz \
+RUN set -eux \
+ && mkdir -p /out \
+ && cd /rootfs \
+ && find . | cpio -H newc -o | gzip -9 > /out/initramfs.cpio.gz \
  && echo "initramfs built: $(ls -lh /out/initramfs.cpio.gz)"
