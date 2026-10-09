@@ -32,8 +32,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cache Alpine base image
+        continue-on-error: true
         run: |
-          docker pull alpine:${{ env.ALPINE_VERSION }}
+          docker pull alpine:${{ env.ALPINE_VERSION }} || echo "Rate limited, will retry during build"
 
       - name: Determine kernel version
         id: kernel-version
