@@ -8,7 +8,12 @@
 
 **Tech Stack:** Xen PVH (type="pvh"), Alpine Linux base (musl, busybox init), Alpine linux-virt kernel or custom minimal kernel, Node.js 24 (musl), initramfs cpio.gz rootfs, Go (for build tooling), existing qlvm libxl/ovn integration.
 
-**Note:** Alpine cannot practically use BlueBuild/ostree (RPM-based tooling). This plan uses a pure initramfs approach — no ostree, no systemd, no dracut. This is faster and has smaller TCB than the ostree path.
+**Container-based transport:** The kernel + initramfs are packaged into a container image (similar to bootc). qlvm extracts them from the container and creates a PVH domain directly. This allows:
+- Building in GitHub Actions (container images are the output)
+- Distribution via ghcr.io (same as os images)
+- qlvm integration (pull container, extract kernel + initramfs, create domain)
+
+**Why not ostree:** Alpine cannot practically use BlueBuild/ostree (RPM-based tooling). This approach uses a pure initramfs — no ostree, no systemd, no dracut. This is faster and has smaller TCB than the ostree path.
 
 **Spec:** This plan documents the design; see inline rationale for each decision.
 
@@ -21,9 +26,10 @@ The current environment (see `../os` and `../qlvm`) provides:
   - Main Fedora Sway Atomic dom0 image (with xen, xen-libs, xen-runtime)
   - `os-bolt`: Headless minimal bootc image for disposable waypipe UI VMs (waypipe, firefox, systemd-networkd, nmap-ncat, xwayland-satellite)
   - `os-xenguest`: Headless Xen PV guest with minimal kernel RPMs (stripped ~70% of modules vs stock Fedora kernel)
+- **xen-guest-kernel**: Minimal Fedora Xen PV guest kernel (stripped subsystems, 643 modules vs 4551 stock)
 - **Current VM boot**: Container images (bootc/ostree) → dracut initrd → kernel → systemd. Attack surface includes: full kernel module set, systemd, ostree, bootc, container runtime layers.
 
-**Gap:** No support for ultra-minimal initramfs-only VMs (no disk, no ostree, no systemd, no container layers). Pi agent needs Node.js + minimal deps; current approach is overkill.
+**Gap:** No support for Alpine-based minimal VMs. Pi agent needs Node.js + minimal deps; Fedora-based approach is overkill and user doesn't want Fedora.
 
 ## Design Decisions
 
@@ -870,27 +876,47 @@ Achieve <10s boot time. Document final configuration.
 
 ## Phase 6: Build Automation and Testing
 
-### Task 11: Build Automation (Alpine-based)
+### Task 11: Build Automation (GitHub Actions + container packaging)
 
 **Files:**
 - Create: `Makefile` (top-level build orchestration)
-- Create: `build/kernel/Dockerfile` (Alpine kernel build)
+- Create: `build/kernel/Dockerfile.a` (Alpine linux-virt extraction)
+- Create: `build/kernel/Dockerfile.b` (custom minimal kernel build)
 - Create: `build/rootfs/Dockerfile` (Alpine rootfs build)
+- Create: `build/container/Dockerfile` (container packaging)
+- Create: `.github/workflows/build.yml` (GitHub Actions pipeline)
 
-**Build Pipeline:**
+**Build Pipeline (GitHub Actions):**
 ```
-make build
-  → make kernel      (extract Alpine linux-virt or build custom minimal kernel)
-  → make rootfs      (apk install packages + pi agent + pack initramfs)
-  → make template    (create qlvm initramfs template)
-  → make test        (run boot test)
+push to main
+  → build kernel (Option A or B)
+  → build rootfs (apk install + pi agent + pack initramfs)
+  → package into container image (kernel + initramfs embedded)
+  → push to ghcr.io/jcpowermac/pi-in-xen:latest
+  → upload artifacts (vmlinuz, initramfs.cpio.gz, .config)
 ```
 
-**Makefile:**
+**Container layout (similar to bootc):**
+```
+Container image: ghcr.io/jcpowermac/pi-in-xen:latest
+├── /usr/lib/modules/<version>/vmlinuz      # kernel
+├── /usr/lib/modules/<version>/initramfs.img # initramfs (full Alpine rootfs)
+├── /etc/os-release                         # Alpine metadata
+├── /etc/kernel-version                     # kernel version string
+└── Labels:
+    io.qlvm.type="pvh-initramfs"
+    io.qlvm.kernel="/usr/lib/modules/<version>/vmlinuz"
+    io.qlvm.initramfs="/usr/lib/modules/<version>/initramfs.img"
+```
+
+**qlvm integration:**
+qlvm pulls the container image, extracts kernel + initramfs, creates PVH domain directly. No disk, no btrfs, no ostree. This is similar to how bootc works (container → ostree image), but simpler (container → kernel + initramfs).
+
+**Local build (Makefile):**
 ```makefile
-.PHONY: build kernel-a kernel-b rootfs template test
+.PHONY: build kernel-a kernel-b rootfs container extract test clean
 
-build: kernel-a rootfs template
+build: kernel-a rootfs container
 
 # Option A: Alpine linux-virt kernel (fast)
 kernel-a:
@@ -904,15 +930,24 @@ kernel-b:
 
 rootfs: kernel-a
 	docker build -t alpine-rootfs -f build/rootfs/Dockerfile build/rootfs/
-	docker cp $(docker create alpine-rootfs):/rootfs/. build/rootfs/out/
-	cd build/rootfs/out && find . | cpio -H newc -o | gzip -9 > /initramfs.cpio.gz
+	docker cp $(docker create alpine-rootfs):/out/initramfs.cpio.gz build/rootfs/out/
 
-template: rootfs
-	qlvm template create-initramfs pi-agent \
-		--kernel build/kernel/out/vmlinuz \
-		--initramfs build/rootfs/out/initramfs.cpio.gz
+container: rootfs
+	mkdir -p build/container/context
+	cp build/kernel/out/vmlinuz build/container/context/
+	cp build/rootfs/out/initramfs.cpio.gz build/container/context/initramfs.img
+	cp build/container/os-release build/container/context/
+	echo "local-build" > build/container/context/kernel-version
+	docker build --build-arg KERNEL_VERSION=local-build \
+		-t pi-in-xen:latest -f build/container/Dockerfile build/container/context/
 
-test: template
+extract: container
+	CONTAINER=$(docker create pi-in-xen:latest)
+	docker cp $$CONTAINER:/usr/lib/modules/local-build/vmlinuz build/kernel/out/
+	docker cp $$CONTAINER:/usr/lib/modules/local-build/initramfs.img build/rootfs/out/initramfs.cpio.gz
+	docker rm $$CONTAINER
+
+test: extract
 	qlvm vm create pi-test --template pi-agent --memory 1024 --vcpus 2
 	qlvm vm start pi-test
 	sleep 10
