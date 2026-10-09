@@ -48,7 +48,7 @@ jobs:
             echo "option=a" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build kernel (Option A: linux-virt)
+      - name: "Build kernel (Option A: linux-virt)"
         if: steps.kernel-version.outputs.option == 'a'
         run: |
           docker build -t alpine-kernel:a -f build/kernel/Dockerfile.a build/kernel/
@@ -57,7 +57,7 @@ jobs:
           docker rm "$CONTAINER"
           ls -lh build/kernel/out/
 
-      - name: Build kernel (Option B: custom minimal)
+      - name: "Build kernel (Option B: custom minimal)"
         if: steps.kernel-version.outputs.option == 'b'
         run: |
           docker build -t alpine-kernel:b -f build/kernel/Dockerfile.b build/kernel/
