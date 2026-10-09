@@ -1,0 +1,24 @@
+# Build artifacts
+build/*/out/
+build/*/bin/
+*.cpio.gz
+vmlinuz
+initramfs.img
+
+# Go
+bin/
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local work
+.worktrees/
+.superpowers/
+
+# Test VMs
+/var/lib/qvm/

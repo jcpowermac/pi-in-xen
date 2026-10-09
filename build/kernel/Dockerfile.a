@@ -1,0 +1,10 @@
+# Option A: Extract Alpine linux-virt kernel (fast, practical)
+# Uses Alpine's pre-built linux-virt kernel with Xen PV/PVH support.
+# Disable module loading at boot: module.sig_enforce=1 + seccomp
+
+FROM alpine:3.21
+
+RUN apk add --no-cache linux-virt
+
+COPY extract-kernel.sh /extract-kernel.sh
+RUN /extract-kernel.sh

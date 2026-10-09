@@ -1,0 +1,12 @@
+# Alpine packages for pi agent Xen PVH VM
+# Core
+busybox
+# Node.js runtime
+nodejs-lts
+npm
+# Pi agent dependencies
+git
+ripgrep
+ca-certificates
+# Minimal system
+mdev
