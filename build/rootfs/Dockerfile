@@ -36,6 +36,11 @@ RUN set -eux \
  && cp -a /usr/lib/. /rootfs/usr/lib/ \
  && [ -d /usr/share ] && cp -a /usr/share/. /rootfs/usr/share/ || true
 
+# Copy essential libraries (musl, etc.) BEFORE busybox install so chroot works
+RUN set -eux \
+ && cp -a /lib/. /rootfs/lib/ \
+ && [ -d /lib64 ] && cp -a /lib64/. /rootfs/lib64/ || true
+
 # Copy busybox and create symlinks using chroot so paths are correct
 RUN set -eux \
  && cp -a /bin/busybox /rootfs/bin/ \
@@ -53,11 +58,6 @@ RUN set -eux \
 # Copy ca-certificates
 RUN set -eux \
  && cp -a /etc/ssl/. /rootfs/etc/ssl
-
-# Copy essential libraries (musl, etc.)
-RUN set -eux \
- && cp -a /lib/. /rootfs/lib/ \
- && [ -d /lib64 ] && cp -a /lib64/. /rootfs/lib64/ || true
 
 # Install pi agent in main container (npm works here), then copy to rootfs
 WORKDIR /app
