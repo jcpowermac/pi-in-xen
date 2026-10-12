@@ -6,13 +6,24 @@
 
 ## Context
 
-The `pi-in-xen` project (`/var/home/jcallen/Development/pi-in-xen`) builds a minimal Xen PVH VM that runs the pi agent (`pi.dev`) in ~1.2s boot time. The VM is distributed as a container image (`ghcr.io/jcpowermac/pi-in-xen:latest`) with the kernel and initramfs embedded.
+The `pi-in-xen` project (`/var/home/jcallen/Development/pi-in-xen`) builds a minimal Xen PVH VM that runs the pi agent (`pi.dev`) in ~1.0s boot time. The VM is distributed as a container image (`ghcr.io/jcpowermac/pi-in-xen:latest`) with the kernel and initramfs embedded.
 
-**Current state:**
-- ✅ Container image builds successfully on GitHub Actions
+**Current state (2026-10-12):**
+- ✅ Container image builds successfully on GitHub Actions (run 38292782472)
 - ✅ Kernel + initramfs boot correctly on Xen PVH (tested with `xl create`)
-- ✅ Pi agent TUI displays in ~1.2s
+- ✅ Pi agent TUI displays in ~1.0s
+- ✅ All initramfs bugs fixed (nested dirs, busybox symlinks, /usr/bin/env, permissions)
 - ❌ qlvm cannot yet create VMs from this container (only supports ostree/bootc raw disk images)
+
+**Verified boot sequence (from console log):**
+```
+[0.000s] Linux version 6.12.112-0-virt
+[0.135s] Booting kernel on Xen PVH
+[0.198s] Unpacking initramfs...
+[0.931s] Freeing initrd memory: 61920K
+[0.942s] Run /init as init process
+[~1.0s] Pi v1.1.0 TUI displayed
+```
 
 **Goal:** Extend qlvm to support a new template type (`pvh-initramfs`) that extracts kernel + initramfs from a container image and boots them directly (no disk, no ostree, no systemd).
 
@@ -300,5 +311,12 @@ These bugs were in the pi-in-xen Dockerfile and init script, now fixed and pushe
 2. `busybox --install -s /rootfs/bin` created symlinks to `/rootfs/bin/busybox` → use `chroot`
 3. Missing `/usr/bin/env` → add symlink
 4. `--workspace` not a valid pi option → use `cd /workspace`
+5. `/workspace` owned by root → `chown -R 1000:1000 /rootfs/workspace /rootfs/var`
+6. `chroot /rootfs /bin/busybox` failed (no musl libs yet) → copy `/lib` before busybox install
 
-Boot time: ~1.2s from power-on to pi agent TUI.
+Boot time: ~1.0s from power-on to pi agent TUI.
+
+**Known pi agent behavior:**
+- Session directory is `/workspace/.pi/agent/sessions/<name>` where `<name>` is derived from the working directory
+- `fd` (ripgrep alternative) download fails without network (non-fatal warning)
+- No models available without API key (use `/login` in pi TUI to configure)
