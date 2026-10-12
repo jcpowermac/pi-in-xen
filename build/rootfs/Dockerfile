@@ -33,15 +33,18 @@ RUN set -eux \
  && cp -a /usr/bin/npx /rootfs/usr/bin/ \
  && cp -a /usr/bin/git /rootfs/usr/bin/ \
  && cp -a /usr/bin/rg /rootfs/usr/bin/ \
- && cp -a /usr/lib /rootfs/usr/lib/ \
- && [ -d /usr/share ] && cp -a /usr/share /rootfs/usr/share/ || true
+ && cp -a /usr/lib/. /rootfs/usr/lib/ \
+ && [ -d /usr/share ] && cp -a /usr/share/. /rootfs/usr/share/ || true
 
-# Copy busybox and create symlinks (mdev is a busybox applet)
+# Copy busybox and create symlinks using chroot so paths are correct
 RUN set -eux \
  && cp -a /bin/busybox /rootfs/bin/ \
- && /rootfs/bin/busybox --install -s /rootfs/bin \
- && /rootfs/bin/busybox --install -s /rootfs/sbin \
- && ln -sf /bin/busybox /rootfs/bin/sh 2>/dev/null || true \
+ && chroot /rootfs /bin/busybox --install -s /bin \
+ && chroot /rootfs /bin/busybox --install -s /sbin
+
+# Add missing symlinks needed by pi agent and node
+RUN set -eux \
+ && ln -sf /bin/env /rootfs/usr/bin/env \
  && ln -sf /bin/busybox /rootfs/sbin/mdev 2>/dev/null || true \
  && ln -sf /bin/busybox /rootfs/sbin/ifup 2>/dev/null || true \
  && ln -sf /bin/busybox /rootfs/sbin/ifdown 2>/dev/null || true \
@@ -49,12 +52,12 @@ RUN set -eux \
 
 # Copy ca-certificates
 RUN set -eux \
- && cp -a /etc/ssl /rootfs/etc/ssl
+ && cp -a /etc/ssl/. /rootfs/etc/ssl
 
 # Copy essential libraries (musl, etc.)
 RUN set -eux \
- && cp -a /lib /rootfs/lib \
- && cp -a /lib64 /rootfs/lib64 2>/dev/null || true
+ && cp -a /lib/. /rootfs/lib/ \
+ && [ -d /lib64 ] && cp -a /lib64/. /rootfs/lib64/ || true
 
 # Install pi agent in main container (npm works here), then copy to rootfs
 WORKDIR /app
@@ -64,8 +67,8 @@ RUN set -eux \
 
 # Copy installed pi agent to rootfs
 RUN set -eux \
- && cp -a /usr/local/bin /rootfs/usr/local/bin \
- && cp -a /usr/local/lib /rootfs/usr/local/lib
+ && cp -a /usr/local/bin/. /rootfs/usr/local/bin/ \
+ && cp -a /usr/local/lib/. /rootfs/usr/local/lib/
 
 # Set up init and passwd/group
 RUN set -eux \

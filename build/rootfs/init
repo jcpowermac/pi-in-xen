@@ -24,9 +24,9 @@ if [ -n "$IP" ]; then
     ip route add default via "$GATEWAY"
 fi
 
-# Drop privileges to piagent user
-exec setpriv --reuid=1000 --regid=1000 --clear-groups \
-  /usr/local/bin/pi --workspace /workspace
+# Drop privileges to piagent user and start pi agent in workspace
+cd /workspace
+exec su - piagent -c "/usr/local/bin/pi"
 
 # Fallback: interactive shell (should not happen)
 exec /bin/busybox sh
