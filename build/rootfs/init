@@ -1,6 +1,6 @@
 #!/bin/busybox sh
 # Alpine initramfs init script for pi agent Xen PVH VM
-# PID 1: mount pseudo-fs, configure network, exec pi agent
+# PID 1: mount pseudo-fs, configure network, run pi agent, shutdown on exit
 
 # Mount pseudo-filesystems
 mount -t proc none /proc
@@ -24,9 +24,12 @@ if [ -n "$IP" ]; then
     ip route add default via "$GATEWAY"
 fi
 
-# Drop privileges to piagent user and start pi agent in workspace
+# Run pi agent as a child (NOT exec — init must stay PID 1).
+# When pi exits (quit, crash, Ctrl+] escape), drop to shell for debugging.
 cd /workspace
-exec su - piagent -c "/usr/local/bin/pi"
+su - piagent -c "/usr/local/bin/pi"
+rc=$?
 
-# Fallback: interactive shell (should not happen)
-exec /bin/busybox sh
+echo "pi agent exited (rc=$rc), dropping to shell"
+echo "Inspect as needed, then run: poweroff"
+exec su - piagent -c "/bin/busybox sh"

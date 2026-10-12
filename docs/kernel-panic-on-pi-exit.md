@@ -46,7 +46,7 @@ Run pi as a **child** of init, not as init itself. When pi exits, init performs 
 ```sh
 #!/bin/busybox sh
 # Alpine initramfs init script for pi agent Xen PVH VM
-# PID 1: mount pseudo-fs, configure network, run pi agent, shutdown on exit
+# PID 1: mount pseudo-fs, configure network, run pi agent, drop to shell on exit
 
 # Mount pseudo-filesystems
 mount -t proc none /proc
@@ -71,43 +71,22 @@ if [ -n "$IP" ]; then
 fi
 
 # Run pi agent as a child (NOT exec — init must stay PID 1).
-# When pi exits, perform a clean shutdown.
+# When pi exits (quit, crash, Ctrl+] escape), drop to shell for debugging.
 cd /workspace
 su - piagent -c "/usr/local/bin/pi"
 rc=$?
 
-echo "pi agent exited (rc=$rc), shutting down..."
-
-# Clean shutdown: ACPI poweroff is the standard Xen PVH path.
-# If ACPI isn't available, fall back to /proc/sysrq-trigger or reboot.
-if [ -f /proc/acpi/poweroff ]; then
-    echo 1 > /proc/acpi/poweroff
-elif command -v poweroff >/dev/null 2>&1; then
-    poweroff -f
-else
-    echo b > /proc/sysrq-trigger
-fi
-
-# Should not reach here — poweroff halts the system.
-exec /bin/busybox sh
+echo "pi agent exited (rc=$rc), dropping to shell"
+echo "Inspect as needed, then run: poweroff"
+exec su - piagent -c "/bin/busybox sh"
 ```
 
 ### Key Changes
 
 1. **Removed `exec`** from `su - piagent -c "/usr/local/bin/pi"` — pi runs as a child, init stays PID 1.
-2. **Capture exit code** — `rc=$?` after pi exits.
-3. **Clean shutdown** — ACPI poweroff (the standard Xen PVH shutdown path), with fallbacks.
+2. **Drop to shell on exit** — any exit (quit, crash, Ctrl+] escape) drops to an interactive shell as piagent for debugging.
+3. **Manual shutdown** — user types `poweroff` when done. No auto-shutdown, no lost debugging opportunity.
 4. **Init reaps pi** — as PID 1, init automatically reaps the child process, so no zombie.
-
-### Why Not `exec` with a Wrapper?
-
-An alternative is `exec /path/to/wrapper` where the wrapper runs pi and then powers off. This works but adds a binary. The shell script approach above keeps everything in the existing init script — no new artifacts, no changes to the build.
-
-### Xen-Specific Notes
-
-- **ACPI poweroff**: Xen PVH guests support ACPI poweroff via `/proc/acpi/poweroff` (Linux kernel writes `1`, Xen receives the ACPI event and powers off the domain cleanly). This is the preferred path — the domain disappears from `xl list` cleanly.
-- **`poweroff -f`**: busybox `poweroff` may not exist in the minimal rootfs; `-f` bypasses init scripts (there are none here). Check `apk-list.txt` to confirm availability.
-- **SysRQ fallback**: `echo b > /proc/sysrq-trigger` forces a reboot (not a poweroff). Only use if ACPI is unavailable. Requires `CONFIG_MAGIC_SYSRQ=y` in the kernel config (check `build/kernel/config-alpine`).
 
 ## Verification
 
@@ -117,8 +96,10 @@ After rebuilding the rootfs and template:
 2. `qlvm vm start pi-agent`
 3. `qlvm vm console pi-agent`
 4. Quit the pi agent (e.g., type `exit` or use the agent's quit command)
-5. Expected: console shows "pi agent exited (rc=0), shutting down...", domain disappears from `xl list` cleanly (no panic, no zombie)
-6. Verify: `xl list` shows the domain is gone; no kernel panic in the console history
+5. Expected: console shows "pi agent exited (rc=0), dropping to shell" followed by a shell prompt — no kernel panic
+6. Type a command to verify the shell works (e.g., `ls /workspace`)
+7. Type `poweroff` to shut down; verify domain disappears from `xl list` cleanly
+8. Also test: let pi crash or Ctrl+] escape — should also drop to shell, not panic
 
 ## Related
 
