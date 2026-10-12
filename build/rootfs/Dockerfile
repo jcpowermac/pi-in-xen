@@ -77,6 +77,10 @@ RUN set -eux \
  && cp /init /rootfs/init \
  && chmod +x /rootfs/init
 
+# Set ownership: piagent (uid=1000) needs /workspace and /var
+RUN set -eux \
+ && chown -R 1000:1000 /rootfs/workspace /rootfs/var
+
 # Clean up rootfs (remove unnecessary files)
 RUN set -eux \
  && find /rootfs -name "*.a" -delete 2>/dev/null || true \
