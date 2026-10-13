@@ -53,5 +53,9 @@ su - piagent -c "/usr/local/bin/pi"
 rc=$?
 
 echo "pi agent exited (rc=$rc), dropping to shell"
-echo "Inspect as needed, then run: poweroff"
-exec su - piagent -c "/bin/busybox sh"
+echo "Inspect as needed. Run 'poweroff' or press Ctrl+D to power off."
+# No exec: the shell must not replace PID 1. If it did, Ctrl+D would
+# kill init and panic the kernel. When the shell exits, power off.
+su - piagent -c "/bin/busybox sh"
+echo "shell exited, powering off"
+poweroff
