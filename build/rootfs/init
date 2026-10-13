@@ -24,6 +24,28 @@ if [ -n "$IP" ]; then
     ip route add default via "$GATEWAY"
 fi
 
+# Wait for console connection before starting pi. pi caches the terminal
+# size at startup; without this it gets 0x0 (no console attached) and
+# stays cramped until restarted. qlvm vm console sets the correct size
+# via TIOCSWINSZ when the user connects, so we poll until it's non-zero.
+# Timeout after 30s so the VM is still usable if no one connects.
+echo "Waiting for console connection..."
+i=0
+while [ $i -lt 30 ]; do
+    size=$(stty -F /dev/hvc0 size 2>/dev/null)
+    rows=$(echo "$size" | cut -d' ' -f1)
+    cols=$(echo "$size" | cut -d' ' -f2)
+    if [ "$rows" -gt 0 ] && [ "$cols" -gt 0 ] 2>/dev/null; then
+        echo "Console connected (${rows}x${cols}), starting pi"
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+if [ $i -ge 30 ]; then
+    echo "No console connection after 30s, starting pi anyway"
+fi
+
 # Run pi agent as a child (NOT exec — init must stay PID 1).
 # When pi exits (quit, crash, Ctrl+] escape), drop to shell for debugging.
 cd /workspace
