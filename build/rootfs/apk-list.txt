@@ -1,12 +1,15 @@
 # Alpine packages for pi agent Xen PVH VM
 # Core
 busybox
-# Node.js runtime
+# Node.js runtime (runtime node for the managed pi install)
 nodejs-lts
 npm
+# Terminal multiplexer (decouples pi TUI from console attach lifecycle)
+tmux
 # Pi agent dependencies
 git
 ripgrep
 ca-certificates
+curl
 # Minimal system
 mdev

@@ -6,6 +6,14 @@
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
+# tmux (pi's pty host) needs /dev/ptmx, which devtmpfs alone does not
+# provide: mount devpts and materialize the ptmx node.
+mkdir -p /dev/pts
+mount -t devpts none /dev/pts 2>/dev/null || true
+mknod -m 666 /dev/ptmx c 5 2 2>/dev/null || ln -sf pts/ptmx /dev/ptmx 2>/dev/null || true
+# /tmp is a plain initramfs dir (root:755); node's compile cache and pi
+# need it writable by piagent. A tmpfs is the standard initramfs answer.
+mount -t tmpfs -m 1777 none /tmp 2>/dev/null || chmod 1777 /tmp
 
 # Create console device (Xen PV: hvc0)
 mknod /dev/hvc0 c 226 0 2>/dev/null || true
@@ -24,38 +32,33 @@ if [ -n "$IP" ]; then
     ip route add default via "$GATEWAY"
 fi
 
-# Wait for console connection before starting pi. pi caches the terminal
-# size at startup; without this it gets 0x0 (no console attached) and
-# stays cramped until restarted. qlvm vm console sets the correct size
-# via TIOCSWINSZ when the user connects, so we poll until it's non-zero.
-# Timeout after 30s so the VM is still usable if no one connects.
-echo "Waiting for console connection..."
-i=0
-while [ $i -lt 30 ]; do
-    size=$(stty -F /dev/hvc0 size 2>/dev/null)
-    rows=$(echo "$size" | cut -d' ' -f1)
-    cols=$(echo "$size" | cut -d' ' -f2)
-    if [ "$rows" -gt 0 ] && [ "$cols" -gt 0 ] 2>/dev/null; then
-        echo "Console connected (${rows}x${cols}), starting pi"
-        break
-    fi
-    sleep 1
-    i=$((i + 1))
-done
-if [ $i -ge 30 ]; then
-    echo "No console connection after 30s, starting pi anyway"
-fi
-
-# Run pi agent as a child (NOT exec — init must stay PID 1).
-# When pi exits (quit, crash, Ctrl+] escape), drop to shell for debugging.
+# Run pi under tmux (NOT exec — init must stay PID 1). tmux decouples
+# the TUI's terminal size from the console attach lifecycle: pi starts
+# immediately, no console client needed at boot, and the session
+# survives detach/reconnect.
+#
+# The console itself is bridged through conmux: the Xen console ring
+# (hvc0) is a pure byte stream with no terminal-size channel, so a tmux
+# client attached directly to hvc0 sees a 0x0 winsize and falls back to
+# 80x25. conmux hands the child a pty instead and applies the in-band
+# size marker (DCS 8;rows;cols ST) that `qlvm vm console` pushes on
+# attach and on every local resize; the pty SIGWINCH reflows pi.
+# TERM is set explicitly: the guest has no login env, and a full-screen
+# TUI needs a sane terminal type.
+export TERM=xterm-256color
 cd /workspace
-su - piagent -c "/usr/local/bin/pi"
+tmux new-session -d -s pi "su - piagent -c /usr/local/bin/pi"
+# Bridge the console (hvc0) to a pty; returns when the attach dies
+# (pi exited, or the session died).
+conmux tmux attach-session -t pi
 rc=$?
 
 echo "pi agent exited (rc=$rc), dropping to shell"
 echo "Inspect as needed. Run 'poweroff' or press Ctrl+D to power off."
 # No exec: the shell must not replace PID 1. If it did, Ctrl+D would
 # kill init and panic the kernel. When the shell exits, power off.
-su - piagent -c "/bin/busybox sh"
+# (Also through conmux: the shell then has a real tty/ctty — running it
+# straight on hvc0 gives it no controlling terminal and stty/tty break.)
+conmux su - piagent -c "/bin/busybox sh"
 echo "shell exited, powering off"
 poweroff

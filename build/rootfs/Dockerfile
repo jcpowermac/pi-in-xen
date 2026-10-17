@@ -6,18 +6,25 @@ FROM alpine:3.21
 
 # Copy build files
 COPY init /init
+COPY conmux.c /conmux.c
 COPY etc/passwd /etc/passwd.template
 COPY etc/group /etc/group.template
 
 # Install packages normally (apk has repo access)
+# nodejs-lts (>= 22.19) doubles as the build-time bootstrap for the pi
+# installer AND the runtime node for the pi bundle in the rootfs.
 RUN set -eux \
  && apk add --no-cache \
         nodejs-lts \
         npm \
+        tmux \
         git \
         ripgrep \
+        curl \
         ca-certificates \
-        busybox
+        busybox \
+        gcc \
+        musl-dev
 
 # Create rootfs structure
 RUN set -eux \
@@ -33,6 +40,8 @@ RUN set -eux \
  && cp -a /usr/bin/npx /rootfs/usr/bin/ \
  && cp -a /usr/bin/git /rootfs/usr/bin/ \
  && cp -a /usr/bin/rg /rootfs/usr/bin/ \
+ && cp -a /usr/bin/tmux /rootfs/usr/bin/ \
+ && cp -a /etc/terminfo /rootfs/etc/terminfo \
  && cp -a /usr/lib/. /rootfs/usr/lib/ \
  && [ -d /usr/share ] && cp -a /usr/share/. /rootfs/usr/share/ || true
 
@@ -93,6 +102,13 @@ RUN set -eux \
  && cp /etc/group.template /rootfs/etc/group \
  && cp /init /rootfs/init \
  && chmod +x /rootfs/init
+
+# Compile conmux (console bridge: hvc0 <-> pty, applies the in-band
+# terminal-size marker pushed by qlvm vm console; the Xen console ring
+# has no winsize channel of its own). Static so it has no runtime deps.
+RUN set -eux \
+ && gcc -O2 -Wall -Wextra -static -o /rootfs/usr/bin/conmux /conmux.c \
+ && test -x /rootfs/usr/bin/conmux
 
 # Set ownership: piagent (uid=1000) needs /workspace and /var
 RUN set -eux \
