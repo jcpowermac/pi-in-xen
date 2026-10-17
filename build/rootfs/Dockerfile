@@ -59,16 +59,33 @@ RUN set -eux \
 RUN set -eux \
  && cp -a /etc/ssl/. /rootfs/etc/ssl
 
-# Install pi agent in main container (npm works here), then copy to rootfs
+# Install pi agent in main container via the official managed installer,
+# then copy the managed layout to rootfs.
+#
+# "Not npm": the legacy path was `npm install -g` (floating registry
+# resolution, unpinned transitive deps). The managed installer pins the
+# release via pi.dev's installer API (metadata.json with sourceCommit +
+# per-package integrity hashes) and installs it with `npm ci` against the
+# published package-lock.json. The resulting layout (~/.pi/agent with
+# bin/pi launcher + install/releases/<version>/) is what `pi update`
+# expects, so in-guest updates keep working.
+# Requires node >= 22.19 on PATH (alpine:3.21 nodejs-lts = 22.23.x) for a
+# non-interactive run (no /dev/tty in docker build).
 WORKDIR /app
 RUN set -eux \
- && npm install -g --ignore-scripts @earendil-works/pi-coding-agent --prefix /usr/local \
+ && curl -fsSL https://pi.dev/install.sh | sh \
+ && test -x /root/.pi/agent/bin/pi \
+ && test -f /root/.pi/agent/install/current-version \
  && rm -rf /var/cache/apk /root/.npm /tmp/*
 
-# Copy installed pi agent to rootfs
+# Copy the managed pi layout to rootfs at /.pi (absolute paths, so it
+# works regardless of which user's HOME runs it), plus the pi-node dir if
+# the installer ever ships its own node. The launcher resolves the
+# install tree relative to its own path, so moving it is safe.
 RUN set -eux \
- && cp -a /usr/local/bin/. /rootfs/usr/local/bin/ \
- && cp -a /usr/local/lib/. /rootfs/usr/local/lib/
+ && cp -a /root/.pi /rootfs/.pi \
+ && if [ -d /root/.local/share/pi-node ]; then mkdir -p /rootfs/.local/share && cp -a /root/.local/share/pi-node /rootfs/.local/share/pi-node; fi \
+ && ln -sf /.pi/agent/bin/pi /rootfs/usr/local/bin/pi
 
 # Set up init and passwd/group
 RUN set -eux \
