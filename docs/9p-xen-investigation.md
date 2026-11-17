@@ -241,11 +241,36 @@ p9_client_stat`).
 - RSTAT payload = `u16 prefix` + wstat.   RREAD record = wstat (no prefix).
 - p9_read (TREAD) dir branch accounts `p9s.size + 2` bytes per record.
 
-### Baked `var-data.mount` still needs a boot dependency
-The manual mount works; the systemd unit still races the 9p frontend at boot
-(9pfs-0 not yet Connected). Needs `After=xen-9pfs-0.device`-style ordering or a
-retry (WantedBy + `ConditionPathIsMountPoint`/`ExecCondition` loop) before it's
-relied on for pi seed.
+### Boot-mount race — RESOLVED (retry-loop `.service`, qlvm `57ee934`)
+The manual mount works but a plain `.mount` unit raced at boot for **two**
+distinct reasons, both confirmed via the guest journal:
+
+1. **`/var` not yet writable.** `/var/data`'s parent `/var` is a *separate*
+   generated mount (`/dev/xvda4` xfs) that is not up when `var-data.mount`
+   fires. The composefs root is still read-only, so systemd's
+   `mkdir /var/data` fails: `Failed to create mount point '/var/data':
+   Read-only file system` → `mount point does not exist`. (Not the 9p device.
+   Ordering on `xen-9pfs-0.device` is also unreliable — it stays `inactive
+   (dead)` even with the frontend Connected.)
+2. **9p frontend not yet Connected** (the original suspicion).
+
+Fix (qlvm `internal/ostree/surgery.go`): bake a `Type=oneshot
+RemainAfterExit=yes` **`.service`** instead of a `.mount`. Its `ExecStart` is a
+`/bin/sh` retry loop (up to 60×1s) that does `mkdir -p <where>` && `mount -t 9p
+-o trans=xen <tag> <where>`, exiting 0 on first success. `mkdir` succeeds once
+`/var` is writable; `mount` succeeds once the 9p frontend connects — so the
+loop absorbs **both** races. `WantedBy=multi-user.target`.
+
+Verified end-to-end: VM boots to `multi-user.target` with no manual
+intervention; `mount` shows `<tag> on /var/data type 9p (rw,relatime,access=user,
+trans=xen,version=9p2000.u)`; a guest uid-1000 write lands on the host share
+dir owned by the share root's owner (security_model=none).
+
+> Note: the bake is done by the **qlvm-agent daemon** (the `qlvm` CLI is a
+> thin D-Bus client). After a `make container-build` deploy you must
+> `systemctl restart qlvm-agent` — the running daemon keeps the old code until
+> restarted. That un-restarted daemon was a red herring that looked like a
+> stale Go build cache.
 
 ## 10. Commands (copy-paste)
 
