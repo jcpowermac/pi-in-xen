@@ -301,3 +301,46 @@ sudo mountpoint -q /usr/libexec/xen/bin/xen-9pfsd || sudo mount --bind $PWD/xen-
 cd /var/home/jcallen/Development/qlvm && sudo -n make container-build
 sudo cp target/qlvm /usr/local/bin/qlvm && sudo systemctl restart qlvm-agent
 ```
+
+## 2026-11-17: pi9p agent VM end-to-end verification (findings)
+
+### What works
+- The 9p mount WORKS in the agent VM (Alpine 6.12 kernel): the guest's init mounts
+  `pi9p-0` at `/var/data`, and the probe created `.pi/agent/sessions/` on the host
+  share (`/var/lib/qlvm/9p/pi9p/data/`). Confirmed on the first boot (domid 29/30/31).
+- The 9pfsd (patched, `trans=xen`) serves both the ostree VM (9ptest) + the agent VM (pi9p).
+
+### The pi crash cause: deep mkdir leaf failure on 9p
+- pi crashed with `ENOENT: mkdir '/var/data/.pi/agent/sessions/--var-data--'`.
+- The probe confirmed: `mkdir -p .pi/agent/sessions/--var-data--` creates the PARENT
+  dirs (`.pi/agent/sessions/`) but the LEAF (`--var-data--`) fails with ENOENT.
+- This is a 9p directory-caching/race issue: the parent mkdir is cached, but the leaf
+  (created in the same syscall) isn't visible to the following stat.
+- **Fix (applied to init): `mount -t 9p -o trans=xen,cache=none`** — disables the client
+  dir cache so the leaf mkdir is visible. (Needs a clean 9p boot to verify; the mount is
+  flaky right now, see below.)
+- Alternative fix: pre-create the FULL session dir (including the leaf) in init, or patch
+  pi's `getDefaultSessionDir` to retry.
+
+### The 9pfsd "daemon already running" phantom lock (FIXED)
+- The lock is at `libxl/xen-9pfs/state` (NO leading slash), value "running".
+- `xenstore-rm /libxl/xen-9pfs/state` (WITH leading slash) cleared the WRONG path, so the
+  stale "running" persisted + every new 9pfsd exited with "daemon already running".
+- Fix: clear `libxl/xen-9pfs/state` (no leading slash) before starting the 9pfsd.
+- NOTE: the 9pfsd has NO systemd unit — it must be started manually after a dom0 reboot.
+  (Follow-up: add a systemd unit + a `ExecStartPre` that clears the lock.)
+
+### The 9p mount is FLAKY (guest-side)
+- The 9p mount works sometimes + fails other times. When it fails, the guest's 9p frontend
+  (NET_9P_XEN) connects to the 9pfsd, then closes (backend state → 4/Closed), and the mount
+  fails. The 9pfsd picks up the device quickly (4s), so it's NOT the 9pfsd's slowness.
+- It's a guest-side 9p protocol/timing issue (the Alpine 6.12 kernel's 9p client closing the
+  frontend). The ostree VM (Fedora 7.2.13 kernel) 9p mount is stable.
+- **Follow-up**: investigate the Alpine 6.12 `net/9p/trans_xen.c` + `client.c` for a race.
+  Possible causes: a 9p version mismatch (the 9pfsd echoes 9P2000.u=33), a TATTACH/TSTAT
+  race, or a grant-table timing issue.
+
+### Cleanup / state
+- pi9p VM: running (agent VM, template pi-in-xen-sha256:16e3adfb).
+- The init has a TEMPORARY probe (writes mkdir test results to `/var/data/probe_results.txt`)
+  + the `cache=none` mount option. Remove the probe once the 9p is stable.

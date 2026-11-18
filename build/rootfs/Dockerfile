@@ -20,6 +20,7 @@ RUN set -eux \
         tmux \
         git \
         ripgrep \
+        fd \
         curl \
         ca-certificates \
         busybox \
@@ -30,7 +31,7 @@ RUN set -eux \
 RUN set -eux \
  && mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev \
  && mkdir -p /rootfs/usr/bin /rootfs/usr/sbin /rootfs/usr/local/bin /rootfs/usr/lib /rootfs/usr/share /rootfs/usr/include \
- && mkdir -p /rootfs/var /rootfs/workspace /rootfs/app /rootfs/etc/ssl/certs /rootfs/tmp /rootfs/root /rootfs/lib /rootfs/lib64
+ && mkdir -p /rootfs/var /rootfs/var/data /rootfs/workspace /rootfs/app /rootfs/etc/ssl/certs /rootfs/tmp /rootfs/root /rootfs/lib /rootfs/lib64
 
 # Copy installed packages into rootfs
 # Copy /usr (node, git, rg, node_modules)
@@ -40,6 +41,7 @@ RUN set -eux \
  && cp -a /usr/bin/npx /rootfs/usr/bin/ \
  && cp -a /usr/bin/git /rootfs/usr/bin/ \
  && cp -a /usr/bin/rg /rootfs/usr/bin/ \
+ && cp -a /usr/bin/fd /rootfs/usr/bin/ \
  && cp -a /usr/bin/tmux /rootfs/usr/bin/ \
  && cp -a /etc/terminfo /rootfs/etc/terminfo \
  && cp -a /usr/lib/. /rootfs/usr/lib/ \

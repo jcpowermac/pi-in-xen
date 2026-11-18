@@ -9,6 +9,7 @@ tmux
 # Pi agent dependencies
 git
 ripgrep
+fd
 ca-certificates
 curl
 # Minimal system
