@@ -20,13 +20,19 @@ RUN apk add --no-cache \
         linux-headers \
     && adduser -D -H builder
 
-# aports main/linux-lts (the virt config base + the source it builds).
+# aports main/linux-lts virt.x86_64.config (base for the minimized kernel config).
 COPY minimalize-config.sh /build/minimalize-config.sh
+# Fetch just the virt config as a single raw file, with retries. A full
+# `git clone` of aports over HTTPS intermittently hits GitLab's HTTP 418
+# rate-limit from shared CI runner IPs; a one-file fetch is small and far
+# less likely to trip it. wget is busybox's; grep verifies a real config landed.
 RUN set -eux \
- && git clone --depth 1 --filter=blob:none --sparse \
-        -b 3.21-stable https://gitlab.alpinelinux.org/alpine/aports.git /src/aports \
- && cd /src/aports && git sparse-checkout set main/linux-lts \
- && cp main/linux-lts/virt.x86_64.config /build/virt.x86_64.config
+ && for i in $(seq 1 6); do \
+        wget -q -O /build/virt.x86_64.config \
+          "https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.21-stable/main/linux-lts/virt.x86_64.config" \
+      && break || { echo "aports virt config fetch (attempt $i) failed, retrying..."; sleep 5; }; \
+    done \
+ && grep -q '^CONFIG_' /build/virt.x86_64.config
 
 # Fetch the exact kernel source aports builds, apply the stable patch to reach
 # 7.3.5 (not 7.2: 7.2 is non-LTS, deprecated once 7.3 shipped; 7.4 is only -rc).
