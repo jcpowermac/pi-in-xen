@@ -1,107 +1,96 @@
-# Kernel Panic When Pi Agent Exits
+# Kernel Panic: "Attempted to kill init!" When the Pi Agent VM Ends
 
-## Problem
-
-When the pi agent exits inside the agent VM, the kernel panics:
+The recurring symptom is the same; it has had **three root causes** as
+`build/rootfs/init` evolved. All share the kernel invariant: **if PID 1 (your init)
+exits via `exit_group()`, the kernel panics with "Attempted to kill init!"** — there is
+no kernel option to disable it. So every shutdown path must either power the VM off
+*before* PID 1 exits, or keep PID 1 alive.
 
 ```
 Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000
-CPU: 1 UID: 1000 PID: 1 Comm: pi Not tainted 6.12.112-0-virt #1-Alpine
-Call Trace:
- <TASK>
- dump_stack_lvl+0x5d/0x90
- panic+0x113/0x2d6
- do_exit.cold+0x15/0x15
- do_group_exit+0x2b/0x80
- __x64_sys_exit_group+0x13/0x20
- ...
+CPU: 1 UID: 0 PID: 1 Comm: init Not tainted 7.3.5 #1 PREEMPT(lazy)
+  <TASK>
+  do_exit.cold / do_group_exit / __x64_sys_exit_group   <- PID 1 called exit_group(0)
 ```
 
-Observed live 2026-10-12: user quit the pi agent session, kernel panicked ~immediately after.
+`exitcode=0x0` is the tell that PID 1 exited **cleanly** (reached EOF) rather than
+crashing with a non-zero code.
 
-## Root Cause
+## Stage 1 — pi exec'd as init (fixed 2026-10-12)
 
-`build/rootfs/init` ends with:
+`init` ended with `exec su - piagent -c /usr/local/bin/pi`. The `exec` replaced PID 1
+with the pi agent; when pi exited 0, PID 1 died → panic. **Fix:** run pi as a *child*
+of init so init stays PID 1 and can shut down on pi's exit.
+
+## Stage 2 — the debug shell exec'd as init (fixed 2026-10-12, commit 328af11)
+
+Dropping to a shell with `exec su - piagent -c sh` made the *shell* PID 1, so Ctrl+D
+(the normal way to leave the shell) exited PID 1 → panic. **Fix:** run the shell through
+`conmux` **without** `exec`, so it is a child and Ctrl+D just returns control to init.
+
+## Stage 3 — the final `poweroff` is a no-op (fixed 2026-11-20)
+
+Current `init` runs pi under tmux, bridges the console through `conmux`, and on exit
+drops to a non-`exec` `conmux su - piagent -c sh`. Its last line was:
 
 ```sh
-exec su - piagent -c "/usr/local/bin/pi"
+poweroff
 ```
 
-The `exec` replaces the init process (PID 1) with the pi agent. When pi exits normally (exit code 0), PID 1 dies. The Linux kernel treats exit of PID 1 as fatal — there is no init to reap children or manage the system — so it panics with "Attempted to kill init!".
+That was the bug. busybox's `poweroff` applet (`init/halt.c`) **without `-f` does not
+call `reboot(2)`** — it runs `kill(1, SIGUSR2)` and returns 0, expecting a real busybox
+**init** to catch SIGUSR2 and power off. But PID 1 here is a bare `busybox sh` script
+with no SIGUSR2 handler. So:
 
-This is by design in the kernel: `do_exit()` checks if the exiting task is PID 1 and calls `panic()` unconditionally. There is no kernel config to disable this.
+- the `poweroff` child (running as root) sends `kill(1, SIGUSR2)`, succeeds, returns 0;
+- `poweroff` is the *last* line, so the `sh` immediately hits EOF and calls `exit(0)`
+  before the pending SIGUSR2 is ever dispatched;
+- PID 1 exits 0 → **panic**.
+
+The same flaw explains the interactive case. In the dropped-to shell you are
+**`piagent` (uid 1000)**, not root, and `poweroff` (no `-f`) runs `kill(1, SIGUSR2)` —
+but piagent cannot signal root's PID 1 → `EPERM` → the exact
+`poweroff: : Operation not permitted` (busybox `bb_perror_nomsg_and_die`).
+
+### Fix
+
+```sh
+exec poweroff -f
+```
+
+`-f` forces the direct `reboot(RB_POWER_OFF)` syscall as root (`CAP_SYS_BOOT`). On Xen
+PVH that is the in-hypervisor `HYPERVISOR_reboot` poweroff — it does **not** depend on a
+dom0 libxl event handler (unlike the `RB_AUTOBOOT` reboot-zombie, see
+`qlvm/docs/pitfalls/in-guest-reboot-zombie.md`). `exec` replaces PID 1 with the poweroff
+process, so there is no shell left that can fall off EOF.
 
 ## Why It Matters
 
-- **Data loss risk**: The panic is unclean — no fsync, no graceful shutdown. For an initramfs VM (no persistent disk) this is less critical, but any in-memory state (workspace, agent session) is lost abruptly.
-- **Xen domain state**: After the panic, the domain may sit in an inconsistent state in Xen, requiring `xl destroy` to clean up.
-- **User experience**: Quitting the pi agent (the normal way to end a session) kills the VM with a panic instead of shutting it down cleanly.
-
-## Fix
-
-Run pi as a **child** of init, not as init itself. When pi exits, init performs a clean shutdown.
-
-### Fixed `build/rootfs/init`
-
-```sh
-#!/bin/busybox sh
-# Alpine initramfs init script for pi agent Xen PVH VM
-# PID 1: mount pseudo-fs, configure network, run pi agent, drop to shell on exit
-
-# Mount pseudo-filesystems
-mount -t proc none /proc
-mount -t sysfs none /sys
-mount -t devtmpfs none /dev
-
-# Create console device (Xen PV: hvc0)
-mknod /dev/hvc0 c 226 0 2>/dev/null || true
-
-# Parse network from kernel cmdline
-CMDLINE=$(cat /proc/cmdline)
-IP=$(echo "$CMDLINE" | grep -o 'ip=[^ ]*' | cut -d= -f2)
-
-# Network config (Xen PV: static, no DHCP)
-if [ -n "$IP" ]; then
-    ip link set lo up
-    ip addr add "$IP" dev eth0
-    ip link set eth0 up
-    # Gateway = last octet replaced with 1
-    GATEWAY=$(echo "$IP" | awk -F'[./]' '{print $1"."$2"."$3".1"}')
-    ip route add default via "$GATEWAY"
-fi
-
-# Run pi agent as a child (NOT exec — init must stay PID 1).
-# When pi exits (quit, crash, Ctrl+] escape), drop to shell for debugging.
-cd /workspace
-su - piagent -c "/usr/local/bin/pi"
-rc=$?
-
-echo "pi agent exited (rc=$rc), dropping to shell"
-echo "Inspect as needed, then run: poweroff"
-exec su - piagent -c "/bin/busybox sh"
-```
-
-### Key Changes
-
-1. **Removed `exec`** from `su - piagent -c "/usr/local/bin/pi"` — pi runs as a child, init stays PID 1.
-2. **Drop to shell on exit** — any exit (quit, crash, Ctrl+] escape) drops to an interactive shell as piagent for debugging.
-3. **Manual shutdown** — user types `poweroff` when done. No auto-shutdown, no lost debugging opportunity.
-4. **Init reaps pi** — as PID 1, init automatically reaps the child process, so no zombie.
+- **Unclean shutdown**: the panic skips fsync / graceful teardown. Tolerable for an
+  initramfs VM (no persistent disk), but in-memory state (workspace, agent session) is
+  lost abruptly.
+- **Xen domain state**: after the panic the domain may sit in an inconsistent state in
+  Xen, requiring `xl destroy` / `qlvm vm stop`.
+- **UX**: the normal "leave the session" path kills the VM with a panic instead of a
+  clean poweroff.
 
 ## Verification
 
-After rebuilding the rootfs and template:
+Rebuild + re-bake, then:
 
-1. `qlvm vm create pi-agent --template <new-template>`
-2. `qlvm vm start pi-agent`
-3. `qlvm vm console pi-agent`
-4. Quit the pi agent (e.g., type `exit` or use the agent's quit command)
-5. Expected: console shows "pi agent exited (rc=0), dropping to shell" followed by a shell prompt — no kernel panic
-6. Type a command to verify the shell works (e.g., `ls /workspace`)
-7. Type `poweroff` to shut down; verify domain disappears from `xl list` cleanly
-8. Also test: let pi crash or Ctrl+] escape — should also drop to shell, not panic
+1. `qlvm vm start <vm>` (or create a new one from the re-baked template)
+2. `qlvm vm console <vm>`
+3. Quit pi → expect "pi agent exited (rc=0), dropping to shell", no kernel panic
+4. Leave the shell with **Ctrl+D**. (As `piagent`, a bare `poweroff` fails with
+   `Operation not permitted` — no `CAP_SYS_BOOT`. `sudo poweroff -f` also works.)
+5. Expected: the domain disappears from `xl list` cleanly — no "Attempted to kill init".
 
 ## Related
 
-- qlvm `vm console` terminal size sync and Ctrl+] escape fix (qlvm repo, `internal/xenctl/xenctl_libxl.go`)
-- The `on_reboot=` / `on_crash=` libxl domain config options are **not relevant** here — they require a dom0 event handler to act on domain state changes, and qlvm has no persistent libxl event loop. The fix must be in-guest (init script).
+- `qlvm/docs/pitfalls/in-guest-reboot-zombie.md` — Xen PVH in-guest **reboot**
+  (`RB_AUTOBOOT`) zombing because dom0 has no libxl event handler. A *different* path
+  from the poweroff no-op fixed here.
+- qlvm `vm console` terminal-size sync + Ctrl+] escape
+  (`internal/xenctl/xenctl_libxl.go`).
+- `on_reboot=` / `on_crash=` libxl options are **irrelevant** here — there is no
+  persistent dom0 event loop; the fix must be in-guest (init script).

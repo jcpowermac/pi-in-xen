@@ -87,4 +87,9 @@ echo "Inspect as needed. Run 'poweroff' or press Ctrl+D to power off."
 # straight on hvc0 gives it no controlling terminal and stty/tty break.)
 conmux su - piagent -c "/bin/busybox sh"
 echo "shell exited, powering off"
-poweroff
+# -f forces the reboot(2) syscall (RB_POWER_OFF) as root. Without -f, busybox
+# poweroff only sends SIGUSR2 to PID 1 and returns 0 -- but PID 1 is this bare
+# sh script (no SIGUSR2 handler), so it would hit EOF and exit(0) ->
+# "Attempted to kill init!" kernel panic. exec so PID 1 can't fall off the end
+# of the script either.
+exec poweroff -f
