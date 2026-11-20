@@ -73,6 +73,14 @@ VMs run side by side without sharing state — the rest of the OS stays RAM-only
 `fd` and `ripgrep` are baked into the rootfs so the pi agent's search tools
 work without a runtime download.
 
+**Presenting data (docs, repos) to the agent:** `qlvm vm create --mount
+host:guest` (repeatable) exports any dom0 directory — documentation, git
+repos — into the VM as an additional 9p share; the same `qlvm.mount=` cmdline
+mechanism and init retry loop cover it. Example:
+`--mount /srv/docs:/var/data/docs --mount /srv/repos/proj:/var/data/repos/proj`.
+Mounts are fixed at create time; see the qlvm README ("Shared mounts (9p)")
+for the full story.
+
 ## Project Structure
 
 ```

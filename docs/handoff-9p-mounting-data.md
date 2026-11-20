@@ -15,9 +15,12 @@
   `/var/lib/qlvm/9p/<name>/data` on dom0 (inspectable from dom0).
 - Each agent VM gets its **own** isolated host dir (keyed by VM name), so
   multiple pi VMs run side by side without sharing state.
-- The mount path is currently a **hardcoded constant** in both repos — it is
-  *not* a user-configurable parameter. Making it configurable is the main open
-  item (see §6).
+- **Presenting data to the VM** (docs, git repos) already works today via
+  `qlvm vm create --mount host:guest` (repeatable) — see §6.1. This is now
+  documented in both READMEs (2026-11-18 follow-up).
+- The **pi home** mount path is a **hardcoded constant** in both repos — it is
+  *not* a user-configurable parameter. Making it configurable is the remaining
+  open item (see §6.2).
 
 ## 1. Where the data actually lives
 
@@ -109,9 +112,24 @@ is **patched** in the xen-421 fork:
   shares continue at `<name>-1`, `<name>-2`, …
 - **Ostree VM:** `--mount` shares are 0-based (`<name>-0`, `<name>-1`, …).
 
-## 6. The mount path: a constant, not a parameter
+## 6. Mount paths: what is, and isn't, configurable
 
-Neither side of the path is user-configurable today.
+### 6.1 Presenting data to the VM — already works (`--mount`)
+
+`--mount host:guest` (repeatable, honored at `vm create` for both ostree and
+agent VMs) exports *any* existing dom0 directory into the guest at *any*
+guest path: `--mount /srv/docs:/var/data/docs`,
+`--mount /srv/repos/proj:/var/data/repos/proj`. No copy, read-write, host
+path stays visible on dom0. On agent VMs these shares take tags
+`<name>-1`… and are passed to the guest as extra `qlvm.mount=` cmdline
+entries; the init's retry loop mounts them the same as the pi home. Limitation:
+mounts are fixed at create time (recorded in `meta.yaml`); changing the set
+means recreating the VM. (Documented in the qlvm README "Shared mounts (9p)"
+→ "Presenting data to a VM" and the pi-in-xen README "Persistent workspace".)
+
+### 6.2 The pi home path: a constant, not a parameter
+
+Neither side of the *pi home* path is user-configurable today.
 
 - **Guest path:** `const agentHomeGuest = "/var/data"` —
   `qlvm/internal/vm/domcfg.go:67`.
@@ -170,8 +188,13 @@ Whichever is chosen, if the *guest* path moves you must update both repos
   `jcpowermac/xen` (stable-4.21 fork).
 
 **Pending / open**
-- ❌ **Make the mount path a variable/parameter** (the main open item — see
-  §6; needs a design decision: flag vs config key vs cmdline).
+- ❌ **Make the pi home mount path a variable/parameter** (the main open item
+  — see §6.2; needs a design decision: flag vs config key vs cmdline). Note
+  the resolved host path should be persisted in `Meta` at create time so a
+  later config change doesn't silently repoint existing VMs' shares; the
+  start path (`xenctl` → `DomainConfig(vmDir, m, tpl)`) has no access to the
+  config, only `Meta`. Presenting *other* data is already covered by
+  `--mount` (§6.1).
 - ❌ `Makefile` `test: template` references a `template` target that doesn't
   exist (minor; `make test` currently no-ops/fails on that dep).
 - ❌ `xen-9pfsd` patch doesn't yet handle `TGETATTR`(24)/`TSETATTR`(26) —
