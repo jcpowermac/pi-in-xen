@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       kernel-option:
-        description: 'Kernel option: a (linux-virt, fast) or b (custom minimal, slower)'
+        description: 'Kernel option: b (linux-7.3.5, 9p trans=xen built-in; source of truth) or a (linux-virt)'
         required: false
-        default: 'a'
+        default: 'b'
         type: choice
         options: ['a', 'b']
 
@@ -39,7 +39,7 @@ jobs:
       - name: Determine kernel version
         id: kernel-version
         run: |
-          KERNEL_OPTION="${{ github.event.inputs.kernel-option || 'a' }}"
+          KERNEL_OPTION="${{ github.event.inputs.kernel-option || 'b' }}"
           if [[ "$KERNEL_OPTION" == "b" ]]; then
             # Option B: custom kernel — extract version from build
             echo "version=alpine-custom" >> $GITHUB_OUTPUT
