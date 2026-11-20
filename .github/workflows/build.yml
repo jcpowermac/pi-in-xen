@@ -1,11 +1,21 @@
 name: Build Pi Agent Xen PVH VM
 
 on:
+  # Rebuild only when CI inputs change. CI builds inline from build/ (it does
+  # NOT run the Makefile), so Makefile, docs/, README.md, AGENTS.md, and the
+  # pi-test*.cfg examples are excluded to skip the ~20-min build on docs-only
+  # pushes. Manual runs (workflow_dispatch) ignore paths and always run.
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - 'build/**'
+      - '.github/workflows/build.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'build/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
       kernel-option:
